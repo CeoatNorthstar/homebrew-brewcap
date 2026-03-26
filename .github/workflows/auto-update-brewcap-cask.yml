@@ -1,0 +1,78 @@
+name: Auto-update BrewCap cask
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 */6 * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  update-cask:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout tap repository
+        uses: actions/checkout@v4
+
+      - name: Update cask from latest BrewCap release
+        id: update
+        env:
+          REPO: CeoatNorthstar/BrewCap
+          CASK_FILE: Casks/brewcap.rb
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          release_json="$(curl -fsSL \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${REPO}/releases/latest")"
+          tag="$(printf '%s' "$release_json" | jq -r '.tag_name')"
+
+          if [ -z "$tag" ] || [ "$tag" = "null" ]; then
+            echo "Could not determine latest tag from ${REPO}"
+            exit 1
+          fi
+
+          version="${tag#v}"
+          dmg_url="$(printf '%s' "$release_json" | jq -r --arg version "$version" '.assets[] | select(.name == ("BrewCap-" + $version + ".dmg")) | .browser_download_url' | head -n1)"
+
+          if [ -z "$dmg_url" ] || [ "$dmg_url" = "null" ]; then
+            dmg_url="https://github.com/${REPO}/releases/download/${tag}/BrewCap-${version}.dmg"
+            curl -fsIL "$dmg_url" > /dev/null
+          fi
+
+          echo "Latest tag: ${tag}"
+          echo "Resolved version: ${version}"
+          echo "Downloading DMG: ${dmg_url}"
+
+          curl -fL "$dmg_url" -o /tmp/brewcap.dmg
+          sha="$(sha256sum /tmp/brewcap.dmg | awk '{print $1}')"
+
+          current_version="$(ruby -ne 'puts $1 if $_ =~ /^\s*version\s+"([^"]+)"/' "$CASK_FILE")"
+          current_sha="$(ruby -ne 'puts $1 if $_ =~ /^\s*sha256\s+"([a-fA-F0-9]+)"/' "$CASK_FILE")"
+
+          if [ "$current_version" = "$version" ] && [ "$current_sha" = "$sha" ]; then
+            echo "Cask is already up to date (${version}, ${sha})"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          ruby -i -pe 'gsub(/^(\s*)version\s+"[^"]+"/, "\\1version \"'"$version"'\"")' "$CASK_FILE"
+          ruby -i -pe 'gsub(/^(\s*)sha256\s+"[a-fA-F0-9]+"/, "\\1sha256 \"'"$sha"'\"")' "$CASK_FILE"
+
+          echo "Updated ${CASK_FILE}"
+          git --no-pager diff -- "$CASK_FILE"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Commit and push changes
+        if: steps.update.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Casks/brewcap.rb
+          git commit -m "brewcap: bump to latest release"
+          git push
