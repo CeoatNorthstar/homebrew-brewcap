@@ -1,6 +1,6 @@
 cask "brewcap" do
-  version "1.5.7"
-  sha256 "3593428ea81237c3467c76c490ce51b7658cab78a39fad28213d903cbc90aba5"
+  version "1.5.8"
+  sha256 "6db1fb9f4f242291f773be1907717b216e9eda8112bfd7eaacced917292cb97c"
 
   url "https://github.com/CeoatNorthstar/BrewCap/releases/download/v#{version}/BrewCap-#{version}.dmg"
   name "BrewCap"
